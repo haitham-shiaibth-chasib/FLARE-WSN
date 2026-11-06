@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this code or data, please cite it as below."
+title: "FLARE-WSN: code, data and results for Fidelity Lifetime of Clustered and Clustering-Free Collection in Dual-Prediction Wireless Sensor Networks"
+type: software
+license: MIT
+authors:
+  - family-names: Chasib
+    given-names: Haitham Shiaibth
+    email: haitham.aljabry2014@gmail.com
+    affiliation: "General Directorate of Education in Babylon, Ministry of Education, Iraq"
+repository-code: "https://github.com/haitham-shiaibth-chasib/FLARE-WSN"
+keywords:
+  - wireless sensor networks
+  - dual prediction
+  - clustering
+  - network lifetime
+  - data fidelity

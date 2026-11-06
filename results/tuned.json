@@ -1,0 +1,188 @@
+{
+ "LEACH": {
+  "FL05": {
+   "setting": "eps=0.4",
+   "kw": {
+    "eps_bar": 0.4
+   },
+   "weekA_mean": 1234.8
+  },
+  "FL10": {
+   "setting": "eps=0.8",
+   "kw": {
+    "eps_bar": 0.8
+   },
+   "weekA_mean": 1891.9
+  }
+ },
+ "HEED": {
+  "FL05": {
+   "setting": "eps=0.6",
+   "kw": {
+    "eps_bar": 0.6
+   },
+   "weekA_mean": 1371.4
+  },
+  "FL10": {
+   "setting": "eps=0.8",
+   "kw": {
+    "eps_bar": 0.8
+   },
+   "weekA_mean": 1652.5
+  }
+ },
+ "CA-CH": {
+  "FL05": {
+   "setting": "eps=0.4",
+   "kw": {
+    "eps_bar": 0.4
+   },
+   "weekA_mean": 1039.2
+  },
+  "FL10": {
+   "setting": "eps=0.8",
+   "kw": {
+    "eps_bar": 0.8
+   },
+   "weekA_mean": 1597.8
+  }
+ },
+ "TS-CH": {
+  "FL05": {
+   "setting": "eps=0.6",
+   "kw": {
+    "eps_bar": 0.6
+   },
+   "weekA_mean": 958.4
+  },
+  "FL10": {
+   "setting": "eps=0.8",
+   "kw": {
+    "eps_bar": 0.8
+   },
+   "weekA_mean": 1629.6
+  }
+ },
+ "PEAGC": {
+  "FL05": {
+   "setting": "eps=0.4",
+   "kw": {
+    "eps_bar": 0.4
+   },
+   "weekA_mean": 593.7
+  },
+  "FL10": {
+   "setting": "eps=0.7",
+   "kw": {
+    "eps_bar": 0.7
+   },
+   "weekA_mean": 1597.2
+  }
+ },
+ "CORR-SL": {
+  "FL05": {
+   "setting": "eps=0.6,tau=0.3",
+   "kw": {
+    "eps_bar": 0.6,
+    "extra": {
+     "tau_s": 0.3
+    }
+   },
+   "weekA_mean": 1525.2
+  },
+  "FL10": {
+   "setting": "eps=0.8,tau=0.4",
+   "kw": {
+    "eps_bar": 0.8,
+    "extra": {
+     "tau_s": 0.4
+    }
+   },
+   "weekA_mean": 1800.0
+  }
+ },
+ "FLAT": {
+  "FL05": {
+   "setting": "eps=0.6",
+   "kw": {
+    "eps_bar": 0.6
+   },
+   "weekA_mean": 2307.1
+  },
+  "FL10": {
+   "setting": "eps=0.8",
+   "kw": {
+    "eps_bar": 0.8
+   },
+   "weekA_mean": 2380.3
+  }
+ },
+ "FLAT-EA": {
+  "FL05": {
+   "setting": "eps=0.7,lam=3.0",
+   "kw": {
+    "eps_bar": 0.7,
+    "extra": {
+     "lam": 3.0
+    }
+   },
+   "weekA_mean": 2195.3
+  },
+  "FL10": {
+   "setting": "eps=0.7,lam=3.0",
+   "kw": {
+    "eps_bar": 0.7,
+    "extra": {
+     "lam": 3.0
+    }
+   },
+   "weekA_mean": 2421.2
+  }
+ },
+ "FLAT-CS": {
+  "FL05": {
+   "setting": "eps=0.6,tau=0.4",
+   "kw": {
+    "eps_bar": 0.6,
+    "extra": {
+     "tau_s": 0.4
+    }
+   },
+   "weekA_mean": 1930.2
+  },
+  "FL10": {
+   "setting": "eps=0.7,tau=0.4",
+   "kw": {
+    "eps_bar": 0.7,
+    "extra": {
+     "tau_s": 0.4
+    }
+   },
+   "weekA_mean": 2933.9
+  }
+ },
+ "FLARE": {
+  "FL05": {
+   "setting": "eps=0.5,dd=0.3,lam=1.0",
+   "kw": {
+    "eps_bar": 0.5,
+    "extra": {
+     "delta_d": 0.3,
+     "lam": 1.0
+    }
+   },
+   "weekA_mean": 2137.5
+  },
+  "FL10": {
+   "setting": "eps=0.6,dd=0.4,lam=1.0",
+   "kw": {
+    "eps_bar": 0.6,
+    "extra": {
+     "delta_d": 0.4,
+     "lam": 1.0
+    }
+   },
+   "weekA_mean": 3026.5
+  }
+ }
+}

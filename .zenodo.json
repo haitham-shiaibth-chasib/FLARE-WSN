@@ -1,0 +1,21 @@
+{
+  "title": "FLARE-WSN: code, data and results for \"Fidelity Lifetime of Clustered and Clustering-Free Collection in Dual-Prediction Wireless Sensor Networks\"",
+  "upload_type": "software",
+  "description": "Trace-driven simulator, processed Intel Berkeley Lab data, per-run results and analysis scripts for the paper \"Fidelity Lifetime of Clustered and Clustering-Free Collection in Dual-Prediction Wireless Sensor Networks\". Ten collection policies share one dual-prediction core and are compared by fidelity lifetime on real readings and measured, asymmetric links.",
+  "creators": [
+    {
+      "name": "Chasib, Haitham Shiaibth",
+      "affiliation": "General Directorate of Education in Babylon, Ministry of Education, Iraq"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "wireless sensor networks",
+    "dual prediction",
+    "clustering",
+    "network lifetime",
+    "data fidelity",
+    "trace-driven simulation",
+    "Intel Berkeley Lab"
+  ]
+}
