@@ -15,27 +15,33 @@ MAX_TRIES = 3           # link-layer ARQ attempts
 
 
 class Links:
-    def __init__(self, prr: np.ndarray, pos: np.ndarray, ideal: bool = False):
+    def __init__(self, prr: np.ndarray, pos: np.ndarray, ideal: bool = False, dist_scale: float = 1.0):
         n1 = prr.shape[0]
         self.n = n1 - 1
         fwd = prr.copy()
         np.fill_diagonal(fwd, 0.0)
         rev = fwd.T.copy()
         rev = np.where(rev > 0, rev, fwd)          # missing reverse -> symmetric
-        if ideal:                                   # unit-disk reference used in a sensitivity run
-            fwd = np.where(fwd >= MIN_PRR, 1.0, 0.0)
-            rev = np.where(fwd > 0, 1.0, 0.0)
+        usable = (fwd >= MIN_PRR) & (rev >= MIN_PRR)
+        # positions: nodes from mote_locs, sink at the centroid of the nodes,
+        # weighted by PRR^4 towards the sink so that the motes that hear it best
+        # dominate (its position is not published); fixed by the measured links
+        to_sink = fwd[1:, 0] ** 4
+        sink_xy = (pos * to_sink[:, None]).sum(axis=0) / to_sink.sum()
+        if ideal:
+            # sensitivity run: the measured usable links become loss-free; the
+            # topology and the sink position stay those of the measured network
+            fwd = np.where(usable, 1.0, 0.0)
+            rev = fwd.copy()
         self.fwd, self.rev = fwd, rev
-        self.usable = (fwd >= MIN_PRR) & (rev >= MIN_PRR)
+        self.usable = usable
         # expected transmissions under ARQ with ACK on the reverse link
         q = np.clip(fwd * rev, 1e-9, 1.0)
         self.etx = np.where(self.usable, 1.0 / q, np.inf)
-        # positions: nodes from mote_locs, sink at the PRR-weighted centroid of
-        # the nodes that hear it best (its position is not published)
-        to_sink = fwd[1:, 0] ** 4
-        sink_xy = (pos * to_sink[:, None]).sum(axis=0) / to_sink.sum()
         self.xy = np.vstack([sink_xy, pos])
-        self.dist = np.linalg.norm(self.xy[:, None] - self.xy[None, :], axis=2)
+        # dist_scale stretches every distance (sensitivity run on the radio
+        # amplifier term); routing still follows the measured links
+        self.dist = dist_scale * np.linalg.norm(self.xy[:, None] - self.xy[None, :], axis=2)
 
     # ------------------------------------------------------------------ routing
     def shortest_paths(self, alive_idx: np.ndarray, relay_penalty: np.ndarray | None = None):

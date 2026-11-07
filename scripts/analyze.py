@@ -62,6 +62,27 @@ def holm(p):
     return adj
 
 
+def rank_biserial(d):
+    """Matched-pairs rank-biserial correlation (Kerby's simple difference formula):
+    share of the rank sum held by positive differences minus that held by negative
+    ones; zero differences are dropped, as in the Wilcoxon test."""
+    d = np.asarray(d, float)
+    d = d[d != 0]
+    if not len(d):
+        return 0.0
+    r = stats.rankdata(np.abs(d))
+    return float((r[d > 0].sum() - r[d < 0].sum()) / r.sum())
+
+
+def wins(df, metric, base, other):
+    """Paired runs in which `other` is ahead of, behind or level with `base`."""
+    a = df[df.method == other].set_index("seed")[metric]
+    b = df[df.method == base].set_index("seed")[metric]
+    c = a.index.intersection(b.index)
+    d = (a[c] - b[c]).to_numpy(float)
+    return int((d > 0).sum()), int((d < 0).sum()), int((d == 0).sum())
+
+
 def paired(df, metric, base, other):
     """Paired comparison other - base over common seeds, in hours."""
     a = df[df.method == other].set_index("seed")[metric]
@@ -71,8 +92,7 @@ def paired(df, metric, base, other):
     if np.allclose(d, 0):
         return 1.0, 0.0, 0.0, (0.0, 0.0)
     res = stats.wilcoxon(d, zero_method="wilcox", alternative="two-sided")
-    pos, neg = (d > 0).sum(), (d < 0).sum()
-    rb = (pos - neg) / max(pos + neg, 1)               # matched-pairs rank-biserial (sign form)
+    rb = rank_biserial(d)
     rng = np.random.default_rng(0)
     boot = [np.median(rng.choice(d, len(d))) for _ in range(5000)]
     return float(res.pvalue), float(np.median(d)), float(rb), tuple(np.percentile(boot, [2.5, 97.5]))
@@ -116,7 +136,7 @@ def main_tables(numbers):
                     srows.append({"Family": fam, "Metric": mk, "Comparison": f"{a} vs {b}",
                                   "Median diff (h)": round(r[1], 1),
                                   "95% CI (h)": f"[{r[3][0]:.1f}, {r[3][1]:.1f}]",
-                                  "Rank-biserial": round(r[2], 2), "p (Holm)": pa})
+                                  "Rank-biserial (Kerby)": round(r[2], 2), "p (Holm)": pa})
                     numbers[f"{tgt}_{mk}_{a}_vs_{b}_p"] = float(pa)
                     numbers[f"{tgt}_{mk}_{a}_vs_{b}_meddiff_h"] = round(r[1], 1)
                     numbers[f"{tgt}_{mk}_{a}_vs_{b}_rb"] = round(r[2], 2)
@@ -127,6 +147,22 @@ def main_tables(numbers):
         g = sub.groupby("method")[[tgt, ct, "FND", "HND"]].mean()
         best_cl = g.loc[CLUSTERED, tgt].idxmax()
         numbers[f"{tgt}_best_clustered"] = best_cl
+        med = sub.groupby("method")[tgt].median()
+        numbers[f"{tgt}_best_clustered_median"] = med.loc[CLUSTERED].idxmax()
+        for m in FREE:
+            numbers[f"{tgt}_gain_FL_{m}_vs_bestcl_median_pct"] = round(
+                100 * (med[m] / med.loc[CLUSTERED].max() - 1), 1)
+        for m in CLUSTERED:
+            numbers[f"{tgt}_wins_FLAT_vs_{m}"] = wins(sub, tgt, m, "FLAT")
+        numbers[f"{tgt}_wins_FND_FLAT_vs_CORR-SL"] = wins(sub, "FND", "CORR-SL", "FLAT")
+        p, md, rb, ci = paired(sub, "FND", "CORR-SL", "FLAT")
+        numbers[f"{tgt}_FND_FLAT_vs_CORR-SL_p"] = p
+        numbers[f"{tgt}_min_FLAT_minus_clustered_h"] = round(min(
+            float(((sub[sub.method == "FLAT"].set_index("seed")[tgt]
+                    - sub[sub.method == m].set_index("seed")[tgt]) * H).min()) for m in CLUSTERED), 1)
+        chs = sub.groupby("method")["ch_per_epoch"].mean()
+        for m in CLUSTERED:
+            numbers[f"{tgt}_ch_per_epoch_{m}"] = round(float(chs[m]), 1)
         for m in FREE:
             for col, key in ((tgt, "FL"), (ct, "CT"), ("HND", "HND"), ("FND", "FND")):
                 numbers[f"{tgt}_gain_{key}_{m}_vs_bestcl_pct"] = round(100 * (g.loc[m, col] / g.loc[best_cl, col] - 1), 1)
@@ -141,7 +177,9 @@ def main_tables(numbers):
     led = sub.groupby("method")["ledger_share"].apply(
         lambda s: np.mean([json.loads(x) if isinstance(x, str) else x for x in s], axis=0))
     led = pd.DataFrame(led.tolist(), index=led.index,
-                       columns=["Sensing/CPU", "Control", "Own updates", "CH duty", "Relaying", "E2E ACK"])
+                       columns=["Sensing/CPU", "Control", "Own updates", "CH listening",
+                                "CH reception", "CH forwarding", "Relaying", "E2E ACK"])
+    led["CH duty"] = led[["CH listening", "CH reception", "CH forwarding"]].sum(axis=1)
     led.loc[ORDER].round(3).to_csv(TAB / "energy_ledger.csv")
     for m in ORDER:
         numbers[f"ledger_{m}"] = led.loc[m].round(3).to_dict()
@@ -180,6 +218,29 @@ def sensitivity_table(numbers):
     g = g.join(sd).reset_index()
     g.to_csv(TAB / "table_sensitivity.csv", index=False)
     numbers["sensitivity"] = g.to_dict(orient="records")
+    # paired checks per row: clustering-free designs against the two clustered protocols
+    rows = []
+    for (f_, v), sub in df.groupby(["factor", "value"]):
+        for a in ("FLAT", "FLAT-EA"):
+            for b in ("HEED", "LEACH"):
+                if not ((sub.method == a).any() and (sub.method == b).any()):
+                    continue
+                for metric in ("FL05", "CT05"):
+                    w, l_, t_ = wins(sub, metric, b, a)
+                    p, md, rb, ci = paired(sub, metric, b, a)
+                    rows.append({"factor": f_, "value": v, "comparison": f"{a} vs {b}", "metric": metric,
+                                 "ahead": w, "behind": l_, "level": t_, "median_diff_h": round(md, 1),
+                                 "p": round(p, 4)})
+    t = pd.DataFrame(rows)
+    t.to_csv(TAB / "table_sensitivity_tests.csv", index=False)
+    numbers["sensitivity_tests"] = t.to_dict(orient="records")
+    # also: FLARE against FLAT in every row
+    rows = []
+    for (f_, v), sub in df.groupby(["factor", "value"]):
+        if (sub.method == "FLARE").any() and (sub.method == "FLAT").any():
+            w, l_, t_ = wins(sub, "FL05", "FLAT", "FLARE")
+            rows.append({"factor": f_, "value": v, "ahead": w, "behind": l_, "level": t_})
+    numbers["sensitivity_FLARE_vs_FLAT"] = rows
 
 
 def signals_table(numbers):
@@ -242,6 +303,26 @@ def validity_check(data, numbers):
         r = run(data, m, 0, cfg, keep_series=True)
         numbers[f"inf_energy_{m}_max_roll"] = round(float(r["series"]["roll"].max()), 2)
         numbers[f"inf_energy_{m}_FL05_h"] = round(r["FL05"] * H, 1)
+
+
+def energy_rates(data, numbers):
+    """Run 0 with practically unlimited energy: how many microjoules each policy
+    spends per node and hour, by ledger heading, while every node is alive. This
+    separates what a head costs from when nodes die."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from experiments import tuned_cfg
+    heads = ["Sensing/CPU", "Control", "Own updates", "CH listening", "CH reception",
+             "CH forwarding", "Relaying", "E2E ACK"]
+    rows = {}
+    for m in ORDER:
+        cfg = tuned_cfg(m, "FL05", E0=1.0)
+        r = run(data, m, 0, cfg, keep_series=True)
+        per = r["series"]["ledger"].sum(axis=0) / (data.n * r["T"] * H) * 1e6
+        rows[m] = dict(zip(heads, np.round(per, 1)))
+        rows[m]["Total"] = round(float(per.sum()), 1)
+    t = pd.DataFrame(rows).T
+    t.to_csv(TAB / "energy_rate_uJ_per_node_hour.csv")
+    numbers["energy_rate_uJ_per_node_hour"] = {m: {k: float(v) for k, v in d.items()} for m, d in rows.items()}
 
 
 def diagnose(data, numbers):
@@ -357,7 +438,7 @@ def fig_timeseries(tr, best_cl, numbers):
     ax.axhline(0.5, color=INK2, lw=0.8)
     ax.set_ylim(0, 2.0)
     ax.set_xlabel("Time (days)")
-    ax.set_ylabel("Field RMSE (°C)")
+    ax.set_ylabel("Windowed field error (°C)")
     ax.legend(frameon=False, loc="upper left", handlelength=2.2)
     fig.savefig(FIG / "fig5_rmse.png")
     plt.close(fig)
@@ -395,14 +476,17 @@ def fig_distribution(numbers):
 
 
 def fig_ledger(led):
-    cats = ["CH duty", "Control", "Own updates", "Relaying", "E2E ACK", "Sensing/CPU"]
-    colors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
-    fig, ax = plt.subplots(figsize=(W1, 3.0))
+    cats = ["CH listening", "CH reception", "CH forwarding", "Control", "Own updates", "Relaying",
+            "E2E ACK", "Sensing/CPU"]
+    labels = ["CH listening", "CH reception", "CH forwarding", "Control", "Own updates", "Relaying",
+              "End-to-end ACKs", "Sensing and processing"]
+    colors = ["#0b3d91", "#2a78d6", "#8fb8ef", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
+    fig, ax = plt.subplots(figsize=(W1, 3.4))
     left = np.zeros(len(ORDER))
-    for c, col in zip(cats, colors):
+    for c, lab, col in zip(cats, labels, colors):
         v = led.loc[ORDER, c].to_numpy() * 100
         ax.barh(range(len(ORDER)), v, left=left, color=col, edgecolor="white", linewidth=0.8,
-                height=0.72, label=c)
+                height=0.72, label=lab)
         left += v
     ax.set_yticks(range(len(ORDER)))
     ax.set_yticklabels(ORDER)
@@ -461,6 +545,7 @@ def main():
     signals_table(numbers)
     tr, data, best_cl = traces(numbers)
     validity_check(data, numbers)
+    energy_rates(data, numbers)
     diagnose(data, numbers)
     early_losses(data, numbers)
     fig_framework()
@@ -472,6 +557,11 @@ def main():
     numbers["tuned"] = {m: {t: v["setting"] for t, v in d.items()} for m, d in tuned.items()}
     numbers["weekA_FL05_h"] = {m: round(d["FL05"]["weekA_mean"] * H, 1) for m, d in tuned.items()}
     numbers["weekA_FL10_h"] = {m: round(d["FL10"]["weekA_mean"] * H, 1) for m, d in tuned.items()}
+    # scenario A: does the ordering of the held-out period already show on the tuning runs?
+    ta = pd.read_csv(TAB / "tuning_weekA_runs.csv")
+    for tgt in ("FL05", "FL10"):
+        sel = pd.concat([ta[(ta.method == m) & (ta.setting == tuned[m][tgt]["setting"])] for m in ["FLAT"] + CLUSTERED])
+        numbers[f"weekA_{tgt}_wins_FLAT"] = {m: wins(sel, tgt, m, "FLAT") for m in CLUSTERED}
     (RES / "numbers.json").write_text(json.dumps(numbers, indent=1, default=float))
     print(json.dumps({k: v for k, v in numbers.items() if "gain" in k or "best" in k}, indent=1))
 

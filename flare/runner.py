@@ -30,7 +30,7 @@ def _key(cfg: Config, method: str, seed: int) -> str:
 
 def _data_for(cfg: Config) -> Data:
     sig = (cfg.signal, cfg.scenario, cfg.ideal_links, cfg.nlms_p, cfg.nlms_mu, tuple(cfg.grid),
-           cfg.extra.get("eps_scale", 1.0))
+           cfg.extra.get("eps_scale", 1.0), cfg.extra.get("dist_scale", 1.0))
     if sig not in _DATA:
         _DATA[sig] = Data(ROOT, cfg)
     return _DATA[sig]

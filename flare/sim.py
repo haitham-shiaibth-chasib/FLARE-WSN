@@ -16,7 +16,7 @@ import numpy as np
 
 from .energy import EnergyModel
 from .methods import Context, build
-from .network import BurstyLinks, Links
+from .network import MAX_TRIES, BurstyLinks, Links
 from .predictors import NLMSBank, update_rate_curves
 from .spatial import SpatialModel
 
@@ -55,7 +55,7 @@ class Data:
         self.prr = np.load(P / f"prr_{sc}.npy")
         self.ids = np.load(P / f"ids_{sc}.npy")
         self.n = self.test.shape[1]
-        self.links = Links(self.prr, self.pos, ideal=cfg.ideal_links)
+        self.links = Links(self.prr, self.pos, ideal=cfg.ideal_links, dist_scale=cfg.extra.get("dist_scale", 1.0))
         scale = cfg.extra.get("eps_scale", 1.0)          # thresholds are given in temperature units
         self.grid = np.array(cfg.grid) * scale
         self.curve = update_rate_curves(self.hist, self.grid, p=cfg.nlms_p, mu=cfg.nlms_mu)
@@ -65,6 +65,9 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
     rng_link = np.random.default_rng([seed, 1])
     rng_pol = np.random.default_rng([seed, 2])
     rng_e = np.random.default_rng([seed, 3])
+    rng_ack = np.random.default_rng([seed, 5])       # only used when end-to-end ACKs can be lost
+    ack_loss = bool(cfg.extra.get("ack_loss", False))
+    listen_mode = cfg.extra.get("listen", "ch")      # "ch" (default), "none" or "all"
     burst_len = cfg.extra.get("burst_len", 0)
     n, L, X = data.n, data.links, data.test
     T = len(X)
@@ -85,14 +88,20 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
     ch_count = np.zeros(n, int)
 
     # energy ledger per node: 0 sensing/CPU, 1 control, 2 own updates,
-    # 3 cluster-head duty, 4 relaying, 5 end-to-end acknowledgements
-    ledger = np.zeros((n, 6))
-    who = {"tx": 0, "ctx": 2, "crx": 3}
+    # 3 CH listening, 4 CH reception of member updates (and aggregation),
+    # 5 CH forwarding of member updates, 6 relaying, 7 end-to-end acknowledgements
+    ledger = np.zeros((n, 8))
+    who = {"tx": 0, "ctx": 2, "crx": 4, "own": 0.0}
 
     def spend(idx, joules):
         if idx > 0:
             E[idx - 1] -= joules
-            ledger[idx - 1, who["ctx"] if idx == who["tx"] else who["crx"]] += joules
+            if idx == who["tx"]:
+                # a CH aggregate may carry the CH's own reading: that share is its own update
+                ledger[idx - 1, 2] += who["own"] * joules
+                ledger[idx - 1, who["ctx"]] += (1.0 - who["own"]) * joules
+            else:
+                ledger[idx - 1, who["crx"]] += joules
 
     def charge(idx, joules, cat):
         E[idx] -= joules
@@ -116,6 +125,7 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
     eps = np.full(n, cfg.eps_bar)
     silent = np.zeros(n, bool)        # live nodes told not to report this epoch
     valid = np.ones(n, bool)          # sink copy of the node predictor is in sync
+    unconfirmed = np.zeros(n, bool)   # node missed the end-to-end ACK of its last update
     reporting = np.ones(n, bool)
     rate_hist, epoch_updates = [], np.zeros(n)
     err = np.zeros(T)
@@ -179,7 +189,7 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
         charge(alive, em.p_floor, 0)
         pn = node.predict()
         # a node that resumes reporting must first re-synchronise with the sink
-        send = sensing & (~valid | (np.abs(x - pn) > eps))
+        send = sensing & (~valid | unconfirmed | (np.abs(x - pn) > eps))
         gen += int(send.sum())
         epoch_updates += send
         buf = {}
@@ -190,17 +200,27 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
                 buf.setdefault(i, []).append(i)
                 continue
             h = head_of[i]
-            who.update(tx=i + 1, ctx=2, crx=3)
+            who.update(tx=i + 1, ctx=2, crx=4, own=0.0)
             ok, ack = L.send(rng_link, i + 1, h + 1, pk.update, em, spend, live_ext, bursts)
             tx_bits += pk.update
             if ok:
                 buf.setdefault(h, []).append(i)
             elif not alive[h]:
                 newly_suspect.append(h)          # silent CH detected by its member
-        # CH idle listening over the TDMA schedule
-        for h in np.flatnonzero(ch & alive):
-            charge(h, em.listen(int((head_of == h).sum())), 3)
+        # CH idle listening over the TDMA schedule ("none": switched off as a check)
+        if listen_mode != "none":
+            for h in np.flatnonzero(ch & alive):
+                charge(h, em.listen(int((head_of == h).sum())), 3)
+        if listen_mode == "all":
+            # symmetric check: every relay also listens to one slot per node that
+            # may route through it (CHs and unclustered nodes)
+            senders = np.flatnonzero(known & (ch | (head_of < 0)))
+            parents = nxt[senders + 1] - 1
+            for j, c in zip(*np.unique(parents[parents >= 0], return_counts=True)):
+                if alive[j]:
+                    charge(int(j), em.listen(int(c)), 6)
         delivered = np.zeros(n, bool)
+        confirmed = np.zeros(n, bool)
         for h, items in buf.items():
             if not alive[h]:
                 continue
@@ -210,12 +230,13 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
             if hops is None:
                 continue
             if ch[h]:
-                charge(h, em.aggregation(len(items)), 3)
+                charge(h, em.aggregation(len(items)), 4)
             bits = pk.aggregate(len(items))
             ok = True
             for a, b in hops:
                 first = a == h + 1
-                who.update(tx=a, ctx=(3 if ch[h] else 2) if first else 4, crx=4)
+                own = (1.0 / len(items) if h in items else 0.0) if (first and ch[h]) else 0.0
+                who.update(tx=a, ctx=(5 if ch[h] else 2) if first else 6, crx=6, own=own)
                 got, _ = L.send(rng_link, a, b, bits, em, spend, live_ext, bursts)
                 tx_bits += bits
                 if not got:
@@ -225,17 +246,55 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
                     break
             if ok:
                 delivered[items] = True
-                # end-to-end acknowledgement: back along the route, then one
-                # beacon from the CH that its members overhear
-                for a, b in hops:
-                    if b > 0:
-                        charge(b - 1, em.tx(pk.ack, L.dist[a, b]), 5)
-                    if a > 0:
-                        charge(a - 1, em.rx(pk.ack), 5)
                 members = [i for i in items if i != h]
-                if members:
-                    charge(h, em.tx(pk.ack, 10.0), 5)
-                    charge(np.asarray(members), em.rx(pk.ack), 5)
+                if not ack_loss:
+                    # end-to-end acknowledgement: back along the route, then one
+                    # beacon from the CH that its members overhear (assumed lossless)
+                    for a, b in hops:
+                        if b > 0:
+                            charge(b - 1, em.tx(pk.ack, L.dist[a, b]), 7)
+                        if a > 0:
+                            charge(a - 1, em.rx(pk.ack), 7)
+                    if members:
+                        charge(h, em.tx(pk.ack, 10.0), 7)
+                        charge(np.asarray(members), em.rx(pk.ack), 7)
+                    confirmed[items] = True
+                else:
+                    # lossy check: the ACK travels back hop by hop with link-layer
+                    # ARQ on the measured links; the CH beacon is heard by each
+                    # member with the measured PRR of the CH-to-member link
+                    back = True
+                    for a, b in reversed(hops):
+                        # b -> a uses the reverse direction of the data link
+                        if bursts is None:
+                            p_ack, p_ll = L.rev[a, b], L.fwd[a, b]
+                        else:
+                            p_ack, p_ll = bursts.rev_now[a, b], bursts.fwd_now[a, b]
+                        got = False
+                        for _ in range(MAX_TRIES):
+                            if b > 0:
+                                charge(b - 1, em.tx(pk.ack, L.dist[a, b]), 7)
+                            if rng_ack.random() < p_ack:
+                                if not got and a > 0:
+                                    charge(a - 1, em.rx(pk.ack), 7)
+                                got = True
+                                if a > 0:
+                                    charge(a - 1, em.tx(pk.ack, L.dist[a, b]), 7)
+                                if rng_ack.random() < p_ll:
+                                    if b > 0:
+                                        charge(b - 1, em.rx(pk.ack), 7)
+                                    break
+                        if not got:
+                            back = False
+                            break
+                    if back:
+                        if h in items:
+                            confirmed[h] = True
+                        if members:
+                            charge(h, em.tx(pk.ack, L.dist[h + 1, np.asarray(members) + 1].max()), 7)
+                            charge(np.asarray(members), em.rx(pk.ack), 7)
+                            heard = rng_ack.random(len(members)) < L.rev[np.asarray(members) + 1, h + 1]
+                            confirmed[np.asarray(members)[heard]] = True
         # local repair: a detected dead CH or relay is reported with the next
         # packet; orphaned members route straight to the sink and paths are
         # recomputed around the hole
@@ -250,15 +309,18 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
         deliv += int(delivered.sum())
 
         # ------------------------------------------------------- predictors
-        # a node commits a reading to its model only when the sink confirmed it,
-        # so node and sink copies stay identical; an unconfirmed reading is
-        # simply re-sent in a later round if the error is still above eps
+        # a node commits a reading to its model only when the sink confirmed it.
+        # With lossless end-to-end ACKs node and sink copies stay identical; when
+        # an ACK can be lost, a node that delivered but heard no ACK diverges from
+        # the sink for one round and re-sends, and both copies restart from the
+        # re-sent reading once it is confirmed
         in_sync = sensing & valid
-        node.advance(np.where(send & delivered, x, pn), pn, in_sync)
+        node.advance(np.where(send & confirmed, x, pn), pn, in_sync)
         ps = sink.predict()
         vs = np.where(delivered, x, ps)
         sink.advance(vs, ps, in_sync & known)
-        resync = delivered & ~valid
+        resync = confirmed & (~valid | unconfirmed)
+        unconfirmed = (unconfirmed | (delivered & ~confirmed)) & ~resync
         if resync.any():
             node.reset(resync, x)
             sink.reset(resync, x)
@@ -301,6 +363,7 @@ def run(data: Data, method: str, seed: int, cfg: Config, keep_series: bool = Fal
         "updates_generated": gen, "updates_delivered": deliv,
         "pdr": deliv / max(gen, 1),
         "tx_kbits": tx_bits / 1e3,
+        "ch_per_epoch": float(ch_count.sum() / max(epoch, 1)),
         "T": T,
         "ledger_share": (ledger.sum(axis=0) / max(ledger.sum(), 1e-12)).round(4).tolist(),
     }

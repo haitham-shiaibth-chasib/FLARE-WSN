@@ -5,14 +5,14 @@
    "kw": {
     "eps_bar": 0.4
    },
-   "weekA_mean": 1234.8
+   "weekA_mean": 1009.2
   },
   "FL10": {
    "setting": "eps=0.8",
    "kw": {
     "eps_bar": 0.8
    },
-   "weekA_mean": 1891.9
+   "weekA_mean": 1677.8
   }
  },
  "HEED": {
@@ -81,14 +81,14 @@
  },
  "CORR-SL": {
   "FL05": {
-   "setting": "eps=0.6,tau=0.3",
+   "setting": "eps=0.7,tau=0.3",
    "kw": {
-    "eps_bar": 0.6,
+    "eps_bar": 0.7,
     "extra": {
      "tau_s": 0.3
     }
    },
-   "weekA_mean": 1525.2
+   "weekA_mean": 1579.8
   },
   "FL10": {
    "setting": "eps=0.8,tau=0.4",
@@ -98,7 +98,7 @@
      "tau_s": 0.4
     }
    },
-   "weekA_mean": 1800.0
+   "weekA_mean": 1771.7
   }
  },
  "FLAT": {

@@ -166,8 +166,14 @@ def sens():
         "k_nb": [4, 6, 8],
         "e0_jitter": [0.0, 0.05, 0.2],
         "p_ch": [0.05, 0.1, 0.2],
+        "rc": [5.0, 10.0, 14.0],
     }
     factors.update(BURST)
+    # checks added in the revision: CH listening switched off or charged to every
+    # relay as well, lossy end-to-end ACKs, stretched distances, and no dual
+    # prediction at all (every node reports every reading, eps = 0)
+    extra_factors = {"listen": ["none", "all"], "ack_loss": [True], "dist_scale": [3.0, 6.0]}
+    factors.update(extra_factors)
     flare_only = {"lam": [0.5, 1.0, 3.0, 10.0], "gamma": [0.5, 1.0, 2.0],
                   "kappa": [1.0, 1.25, 1.5], "delta_d": [0.25, 0.3, 0.35, 0.4, 0.45]}
     jobs, lab = [], []
@@ -175,12 +181,19 @@ def sens():
         for f, vals in factors.items():
             if f == "p_ch" and m not in CLUSTERED:
                 continue
+            if f == "rc" and m != "HEED":           # cluster radius: only HEED uses it here
+                continue
             for v in vals:
-                cfg = (tuned_cfg(m, tgt, extra={f: v}) if f in BURST
+                cfg = (tuned_cfg(m, tgt, extra={f: v}) if (f in BURST or f in extra_factors)
                        else tuned_cfg(m, tgt, **{f: v}))
                 for s in seeds:
                     jobs.append((cfg, m, s))
                     lab.append((f, str(v)))
+    for m in ["HEED", "LEACH", "FLAT", "FLAT-EA"]:
+        cfg = tuned_cfg(m, tgt, eps_bar=0.0)
+        for s in seeds:
+            jobs.append((cfg, m, s))
+            lab.append(("eps_bar", "0.0"))
     for f, vals in flare_only.items():
         for v in vals:
             cfg = tuned_cfg("FLARE", tgt, extra={f: v})

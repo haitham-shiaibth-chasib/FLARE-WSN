@@ -68,3 +68,32 @@ def test_bursty_links_keep_the_measured_mean():
     assert np.all((b.good_f <= 1) & (b.bad_f >= 0))
     share = np.mean([(b.step(), b.state_f.mean())[1] for _ in range(4000)])
     assert abs(share - 0.2) < 0.02                      # stationary share of bad states
+
+
+def test_leach_rotation_serves_each_node_once_per_cycle():
+    from flare.methods import LEACH, Context
+    n, p = 40, 0.1
+    pol = LEACH()
+    rng = np.random.default_rng(3)
+    served = np.zeros(n, int)
+    counts = []
+    for epoch in range(10):                              # one full cycle of 1/p epochs
+        ctx = Context(rng=rng, epoch=epoch, alive=np.ones(n, bool), E=np.ones(n), E0=np.ones(n),
+                      links=None, pos=np.zeros((n, 2)), spatial=None, curve=None, grid=None,
+                      eps_bar=0.5, p_ch=p, rc=7.0, rate_hist=[], epoch_len=30, em=None)
+        ch, _, _ = pol.plan(ctx)
+        served += ch
+        counts.append(int(ch.sum()))
+    assert served.max() == 1                             # nobody serves twice in a cycle
+    assert served.sum() == n                             # and, with T(n) = 1 at the end, everybody serves
+
+
+def test_ideal_links_keep_measured_topology_and_sink():
+    rng = np.random.default_rng(4)
+    prr = rng.uniform(0.0, 1.0, size=(6, 6))
+    prr[prr < 0.3] = 0.0
+    pos = rng.uniform(0, 30, size=(5, 2))
+    a, b = Links(prr, pos), Links(prr, pos, ideal=True)
+    assert np.array_equal(a.usable, b.usable)
+    assert np.allclose(a.xy, b.xy)
+    assert np.all(b.fwd[b.usable] == 1.0)

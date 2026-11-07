@@ -8,7 +8,7 @@ policies: dual prediction, joining the CH with the lowest ETX, ETX shortest-path
 routing, local repair, control and acknowledgement accounting, and the sink's
 spatial reconstruction. The comparison therefore isolates the policy.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -77,30 +77,40 @@ class Policy:
 
 # ------------------------------------------------------- clustered baselines
 class LEACH(Policy):
-    """Heinzelman et al. (2002): stochastic rotation with threshold T(n)."""
+    """Heinzelman et al. (2002): stochastic rotation with threshold T(n).
+
+    G holds the nodes that have not yet served as CH in the current cycle of
+    1/p epochs; it is refilled at the start of every cycle, so that on average
+    a fraction p of the nodes serves in every epoch and each node serves once
+    per cycle."""
     name = "LEACH"
 
     def __init__(self):
-        self.last_ch = None
+        self.G = None
 
     def plan(self, ctx):
         n = len(ctx.alive)
-        if self.last_ch is None:
-            self.last_ch = np.full(n, -10 ** 9)
         p = ctx.p_ch
         period = int(round(1 / p))
         r = ctx.epoch
+        if self.G is None or r % period == 0:
+            self.G = np.ones(n, bool)
         T = p / (1 - p * (r % period))
-        eligible = ctx.alive & (r - self.last_ch >= period)
+        eligible = ctx.alive & self.G
         ch = eligible & (ctx.rng.random(n) < T)
         if not ch.any():
-            ch[ctx.rng.choice(np.flatnonzero(ctx.alive))] = True
-        self.last_ch[ch] = r
+            pool = np.flatnonzero(eligible) if eligible.any() else np.flatnonzero(ctx.alive)
+            ch[ctx.rng.choice(pool)] = True
+        self.G[ch] = False
         return ch, uniform_eps(ctx), None
 
 
 class HEED(Policy):
-    """Younis and Fahmy (2004): iterative election driven by residual energy."""
+    """Younis and Fahmy (2004): iterative election driven by residual energy.
+
+    Simplified: a node that draws below its election probability becomes a
+    final CH at once (no tentative stage and no cost-based choice among
+    tentative heads); coverage is judged by the cluster radius rc."""
     name = "HEED"
 
     def __init__(self, c_prob=0.05, p_min=1e-4):
@@ -218,7 +228,7 @@ class PEAGC(Policy):
 
 
 def correlation_sleep(ctx, tau):
-    """Node selection after Singh et al. (2021): in each correlated
+    """Node selection after Singh and Soni (2021): in each correlated
     neighbourhood the node with the least energy sleeps when its location can
     be inferred within tau; its six nearest neighbours stay awake."""
     live = np.flatnonzero(ctx.alive)
@@ -234,14 +244,17 @@ def correlation_sleep(ctx, tau):
 
 
 class CorrSleep(Policy):
-    """Correlation-based node sleeping on top of HEED (Singh et al., 2021)."""
+    """Correlation-based node sleeping on top of HEED (Singh and Soni, 2021).
+    Sleeping nodes take no part in the CH election."""
     name = "CORR-SL"
 
     def __init__(self):
         self.heed = HEED()
 
     def plan(self, ctx):
-        return self.heed.elect(ctx), correlation_sleep(ctx, ctx.cfg.get("tau_s", 0.3)), None
+        eps = correlation_sleep(ctx, ctx.cfg.get("tau_s", 0.3))
+        awake = replace(ctx, alive=ctx.alive & np.isfinite(eps))
+        return self.heed.elect(awake), eps, None
 
 
 # ------------------------------------------------- clustering-free policies
